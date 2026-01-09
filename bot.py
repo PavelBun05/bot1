@@ -116,37 +116,46 @@ def classes_command(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
-    """Обработка текста (номеров классов)"""
-    text = message.text.strip()
+    """Обработка номеров классов"""
+    user_input = message.text.strip()
     
-    if text.startswith('/'):
-        return
-    
-    if not any(char.isdigit() for char in text):
-        bot.reply_to(message, "Введите номер класса (например: 5А) или команду /help")
+    if user_input.startswith('/'):
         return
     
     if not LOCAL_MODULES:
         bot.reply_to(message, "❌ Модули не загружены")
         return
     
+    if not schedule_parser.has_schedule_file():
+        bot.reply_to(message,
+            "❌ *Файл расписания не найден!*\n\n"
+            "📥 Используйте команду /update чтобы скачать актуальное расписание.",
+            parse_mode='Markdown')
+        return
+    
     try:
-        lessons = schedule_parser.get_schedule_for_class(text)
+        lessons = schedule_parser.get_schedule_for_class(user_input)
         
-        if not lessons:
-            bot.reply_to(message, f"❌ Класс '{text}' не найден", parse_mode='Markdown')
+        if lessons is None:
+            bot.reply_to(message,
+                f"❌ Класс *{user_input}* не найден.\n\n"
+                "💡 *Попробуйте:*\n"
+                "• Другой формат (5А, 5 А, 5а)\n"
+                "• Команду /classes для списка\n"
+                "• Команду /update чтобы обновить расписание",
+                parse_mode='Markdown')
             return
         
-        response = f"📚 *Расписание для {text}:*\n\n"
-        for i, lesson in enumerate(lessons, 1):
-            response += f"*{i}. {lesson['time']}*\n"
-            if lesson['data']:
-                response += f"   {lesson['data'][0]}\n"
-            response += "\n"
+        # Используем новую функцию для Telegram
+        message_text = schedule_parser.format_schedule_for_telegram(user_input, lessons)
+        bot.reply_to(message, message_text, parse_mode='Markdown')
         
-        bot.reply_to(message, response, parse_mode='Markdown')
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {str(e)}", parse_mode='Markdown')
+        logger.error(f"Ошибка обработки класса {user_input}: {e}")
+        bot.reply_to(message,
+            f"❌ *Ошибка при получении расписания:* {str(e)}\n"
+            "Попробуйте обновить расписание командой /update",
+            parse_mode='Markdown')
 
 # ====== ЗАПУСК БОТА ======
 
