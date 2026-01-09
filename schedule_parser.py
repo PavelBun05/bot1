@@ -5,7 +5,7 @@ def read_schedule_file():
     """Читает файл расписания"""
     try:
         if not os.path.exists('school_schedule.csv'):
-            return []  # Возвращаем пустой список если файла нет
+            return []
         with open('school_schedule.csv', 'r', encoding='utf-8') as f:
             return f.readlines()
     except Exception as e:
@@ -37,9 +37,6 @@ def find_class_position(class_name):
 
 def get_schedule_for_class(class_name):
     """Получает расписание для класса"""
-    if not lines:  # Если файл еще не скачан
-        return None
-    
     col, start_line = find_class_position(class_name)
     if col == -1:
         return None
@@ -78,9 +75,6 @@ def get_schedule_for_class(class_name):
 
 def get_available_classes():
     """Получает список классов"""
-    if not lines:  # Если файл еще не скачан
-        return []
-    
     classes = set()
     
     for line in lines:
