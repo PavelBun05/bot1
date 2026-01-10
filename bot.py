@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 import time
+import re
 
 # Настройка логирования для Railway
 logging.basicConfig(
@@ -65,13 +66,18 @@ def send_welcome(message):
     """Обработчик команд /start и /help"""
     help_text = (
         "👋 *Школьный бот расписания*\n\n"
-        "📋 *Команды:*\n"
+        "📋 *Основные команды:*\n"
         "/start, /help - эта справка\n"
-        "/schedule - получить расписание\n"
+        "/schedule - получить расписание класса\n"
         "/update - обновить с сайта\n"
         "/classes - список классов\n\n"
-        "💡 *Или просто отправьте номер класса:*\n"
-        "Например: 5А, 10Е, 8 Б"
+        "👨‍🏫 *Команды для учителей:*\n"
+        "/teacher <фамилия> - расписание учителя\n"
+        "/teachers <часть> - поиск учителя\n\n"
+        "💡 *Или просто отправьте:*\n"
+        "• Номер класса: 5А, 10Е\n"
+        "• Фамилию учителя: Протасова\n"
+        "• Часть фамилии: про (для поиска)"
     )
     bot.reply_to(message, help_text, parse_mode='Markdown')
 
@@ -114,9 +120,75 @@ def classes_command(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка: {str(e)}", parse_mode='Markdown')
 
+@bot.message_handler(commands=['teacher'])
+def teacher_command(message):
+    """Поиск расписания по учителю"""
+    if not LOCAL_MODULES:
+        bot.reply_to(message, "❌ Модули не загружены")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message,
+                     "👨‍🏫 *Поиск расписания учителя:*\n\n"
+                     "✏️ *Использование:* /teacher <фамилия>\n"
+                     "Например: /teacher Протасова\n\n"
+                     "🔍 Для поиска по части фамилии:\n"
+                     "/teachers <часть фамилии>\n"
+                     "Например: /teachers про",
+                     parse_mode='Markdown')
+        return
+    
+    teacher_name = ' '.join(args[1:])
+    
+    try:
+        teacher_info = schedule_parser.get_schedule_by_teacher(teacher_name)
+        response_text = schedule_parser.format_teacher_schedule(teacher_info)
+        bot.reply_to(message, response_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Ошибка поиска учителя {teacher_name}: {e}")
+        bot.reply_to(message, 
+                     f"❌ Ошибка при поиске учителя: {str(e)}\n"
+                     "💡 Попробуйте:\n"
+                     "• Проверить написание фамилии\n"
+                     "• Использовать /teachers для поиска\n"
+                     "• Обновить расписание /update",
+                     parse_mode='Markdown')
+
+@bot.message_handler(commands=['teachers'])
+def search_teachers_command(message):
+    """Поиск учителей по части фамилии"""
+    if not LOCAL_MODULES:
+        bot.reply_to(message, "❌ Модули не загружены")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message,
+                     "🔍 *Поиск учителей:*\n\n"
+                     "✏️ *Использование:* /teachers <часть_фамилии>\n"
+                     "Например: /teachers Про\n"
+                     "Найдет: Протасова, Прокопьев и т.д.\n\n"
+                     "💡 Для полного расписания:\n"
+                     "/teacher <полная фамилия>",
+                     parse_mode='Markdown')
+        return
+    
+    search_query = args[1]
+    
+    try:
+        matches = schedule_parser.search_teachers_by_substring(search_query)
+        response_text = schedule_parser.format_teachers_search_results(matches, search_query)
+        bot.reply_to(message, response_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Ошибка поиска учителей {search_query}: {e}")
+        bot.reply_to(message, f"❌ Ошибка: {str(e)}", parse_mode='Markdown')
+
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
-    """Обработка номеров классов"""
+    """Обработка текстовых сообщений (классы и учителя)"""
     user_input = message.text.strip()
     
     if user_input.startswith('/'):
@@ -134,26 +206,59 @@ def handle_text(message):
         return
     
     try:
-        lessons = schedule_parser.get_schedule_for_class(user_input)
-        
-        if lessons is None:
-            bot.reply_to(message,
-                f"❌ Класс *{user_input}* не найден.\n\n"
-                "💡 *Попробуйте:*\n"
-                "• Другой формат (5А, 5 А, 5а)\n"
-                "• Команду /classes для списка\n"
-                "• Команду /update чтобы обновить расписание",
-                parse_mode='Markdown')
-            return
-        
-        # Используем новую функцию для Telegram
-        message_text = schedule_parser.format_schedule_for_telegram(user_input, lessons)
-        bot.reply_to(message, message_text, parse_mode='Markdown')
+        # Пробуем распознать как класс (сначала проверяем формат класса)
+        if re.match(r'^\d+\s*[А-Яа-яA-Za-z]$', user_input, re.IGNORECASE):
+            # Это похоже на класс - ищем расписание класса
+            lessons = schedule_parser.get_schedule_for_class(user_input)
+            
+            if lessons is None:
+                # Если класс не найден, пробуем поискать как учителя
+                teacher_info = schedule_parser.get_schedule_by_teacher(user_input)
+                if teacher_info:
+                    # Нашли учителя
+                    response_text = schedule_parser.format_teacher_schedule(teacher_info)
+                    bot.reply_to(message, response_text, parse_mode='Markdown')
+                    return
+                else:
+                    # Не нашли ни класс, ни учителя
+                    bot.reply_to(message,
+                        f"❌ *{user_input}* не найден.\n\n"
+                        "💡 *Попробуйте:*\n"
+                        "• Другой формат (5А, 5 А, 5а)\n"
+                        "• Полную фамилию учителя\n"
+                        "• Команду /classes для списка классов\n"
+                        "• Команду /teachers для поиска учителя\n"
+                        "• Команду /update чтобы обновить расписание",
+                        parse_mode='Markdown')
+                    return
+            
+            # Если нашли класс - выводим расписание
+            message_text = schedule_parser.format_schedule_for_telegram(user_input, lessons)
+            bot.reply_to(message, message_text, parse_mode='Markdown')
+            
+        else:
+            # Не похоже на класс - ищем как учителя
+            teacher_info = schedule_parser.get_schedule_by_teacher(user_input)
+            
+            if teacher_info:
+                # Нашли учителя
+                response_text = schedule_parser.format_teacher_schedule(teacher_info)
+                bot.reply_to(message, response_text, parse_mode='Markdown')
+            else:
+                # Не нашли ни класс, ни учителя - предлагаем помощь
+                bot.reply_to(message,
+                    f"❌ *{user_input}* не найден.\n\n"
+                    "💡 *Что можно сделать:*\n"
+                    "• Ввести номер класса (5А, 10Б)\n"
+                    "• Ввести фамилию учителя\n"
+                    "• Использовать /teachers для поиска\n"
+                    "• Использовать /classes для списка классов",
+                    parse_mode='Markdown')
         
     except Exception as e:
-        logger.error(f"Ошибка обработки класса {user_input}: {e}")
+        logger.error(f"Ошибка обработки запроса '{user_input}': {e}")
         bot.reply_to(message,
-            f"❌ *Ошибка при получении расписания:* {str(e)}\n"
+            f"❌ *Ошибка при обработке запроса:* {str(e)}\n"
             "Попробуйте обновить расписание командой /update",
             parse_mode='Markdown')
 
@@ -169,6 +274,13 @@ def main():
     if LOCAL_MODULES:
         if os.path.exists('school_schedule.csv'):
             logger.info("✅ Файл расписания найден")
+            
+            # Инициализируем кэш учителей при запуске
+            try:
+                teacher_index = schedule_parser.get_cached_teacher_index()
+                logger.info(f"✅ Индекс учителей создан: {len(teacher_index)} учителей")
+            except Exception as e:
+                logger.error(f"⚠️ Ошибка создания индекса учителей: {e}")
         else:
             logger.info("📭 Файл расписания не найден")
             logger.info("ℹ️  Используйте /update в боте для загрузки")
